@@ -1,0 +1,1 @@
+# LynxMap Collectors Module

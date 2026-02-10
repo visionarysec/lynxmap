@@ -1,0 +1,26 @@
+# LynxMap - OCI Attack Surface Management Dashboard
+# Core framework
+dash>=2.14.0
+dash-bootstrap-components>=1.5.0
+plotly>=5.18.0
+
+# OCI SDK for cloud infrastructure data collection
+oci>=2.112.0
+
+# Data processing
+pandas>=2.1.0
+numpy>=1.24.0
+
+# YAML for playbook definitions
+pyyaml>=6.0.1
+
+# Environment variables
+python-dotenv>=1.0.0
+
+# Async support for collectors
+aiohttp>=3.9.0
+
+# Development dependencies
+pytest>=7.4.0
+black>=23.10.0
+flake8>=6.1.0

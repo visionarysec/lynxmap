@@ -1,0 +1,130 @@
+# CIS OCI Benchmark v1.2 - Security Playbook
+# Reference: https://www.cisecurity.org/benchmark/oracle_cloud
+
+name: cis_oci_v1
+version: "1.2"
+description: "Center for Internet Security - Oracle Cloud Infrastructure Benchmark"
+author: "LynxMap Security Team"
+
+metadata:
+  severity_levels: [critical, high, medium, low, informational]
+  categories: [identity, networking, storage, compute, database, logging]
+
+checks:
+  # Section 1: Identity and Access Management
+  - id: CIS-1.1
+    name: "Ensure MFA is enabled for all users with console password"
+    service: identity
+    resource_type: user
+    severity: critical
+    condition: "user.is_mfa_activated == true OR user.capabilities.can_use_console_password == false"
+    remediation: "Enable MFA for all users. Navigate to Identity > Users > [User] > Enable MFA"
+
+  - id: CIS-1.2
+    name: "Ensure API keys are rotated within 90 days"
+    service: identity
+    resource_type: api_key
+    severity: high
+    condition: "(current_date - api_key.time_created) < 90"
+    remediation: "Rotate API keys older than 90 days via OCI Console or CLI"
+
+  - id: CIS-1.3
+    name: "Ensure no API keys exist for tenancy administrator users"
+    service: identity
+    resource_type: api_key
+    severity: critical
+    condition: "user.groups NOT CONTAINS 'Administrators'"
+    remediation: "Remove API keys from administrator accounts"
+
+  # Section 2: Networking
+  - id: CIS-2.1
+    name: "Ensure default security list restricts all traffic"
+    service: networking
+    resource_type: security_list
+    severity: high
+    condition: "security_list.ingress_rules == [] AND security_list.egress_rules == []"
+    remediation: "Modify default security list to remove permissive rules"
+
+  - id: CIS-2.2
+    name: "Ensure no security lists allow ingress from 0.0.0.0/0 to port 22"
+    service: networking
+    resource_type: security_list
+    severity: critical
+    condition: "NOT (rule.source == '0.0.0.0/0' AND rule.destination_port == 22)"
+    remediation: "Restrict SSH access to specific IP ranges"
+
+  - id: CIS-2.3
+    name: "Ensure no security lists allow ingress from 0.0.0.0/0 to port 3389"
+    service: networking
+    resource_type: security_list
+    severity: critical
+    condition: "NOT (rule.source == '0.0.0.0/0' AND rule.destination_port == 3389)"
+    remediation: "Restrict RDP access to specific IP ranges"
+
+  - id: CIS-2.4
+    name: "Ensure VCN flow logs are enabled"
+    service: networking
+    resource_type: vcn
+    severity: medium
+    condition: "vcn.flow_logs_enabled == true"
+    remediation: "Enable flow logs for all VCNs"
+
+  # Section 3: Object Storage
+  - id: CIS-3.1
+    name: "Ensure Object Storage buckets are not publicly accessible"
+    service: object_storage
+    resource_type: bucket
+    severity: critical
+    condition: "bucket.public_access_type == 'NoPublicAccess'"
+    remediation: "Set bucket access type to 'NoPublicAccess'"
+
+  - id: CIS-3.2
+    name: "Ensure Object Storage buckets have versioning enabled"
+    service: object_storage
+    resource_type: bucket
+    severity: medium
+    condition: "bucket.versioning == 'Enabled'"
+    remediation: "Enable versioning on Object Storage buckets"
+
+  - id: CIS-3.3
+    name: "Ensure Object Storage buckets are encrypted with customer-managed keys"
+    service: object_storage
+    resource_type: bucket
+    severity: high
+    condition: "bucket.kms_key_id != null"
+    remediation: "Configure customer-managed encryption keys"
+
+  # Section 4: Compute
+  - id: CIS-4.1
+    name: "Ensure boot volumes are encrypted with customer-managed keys"
+    service: compute
+    resource_type: boot_volume
+    severity: high
+    condition: "boot_volume.kms_key_id != null"
+    remediation: "Enable customer-managed key encryption for boot volumes"
+
+  - id: CIS-4.2
+    name: "Ensure instances do not have public IP addresses"
+    service: compute
+    resource_type: instance
+    severity: medium
+    condition: "instance.public_ip == null OR instance.requires_public_ip == true"
+    remediation: "Remove public IP or ensure it's required for the workload"
+
+  # Section 5: Database
+  - id: CIS-5.1
+    name: "Ensure Autonomous Database has encryption enabled"
+    service: database
+    resource_type: autonomous_database
+    severity: critical
+    condition: "db.is_data_guard_enabled == true"
+    remediation: "Enable Data Guard for Autonomous Database"
+
+  # Section 6: Logging and Monitoring
+  - id: CIS-6.1
+    name: "Ensure audit log retention is set to 365 days"
+    service: logging
+    resource_type: audit_configuration
+    severity: high
+    condition: "audit.retention_period >= 365"
+    remediation: "Configure audit log retention to 365 days minimum"

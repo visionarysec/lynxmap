@@ -1,0 +1,403 @@
+/* LynxMap - Custom Styles
+   Color Palette: Deep Navy Teal Theme
+   - #061E29 - Deep navy (darkest - primary background)
+   - #1D546D - Dark teal (secondary background/cards)
+   - #5F9598 - Muted teal (accent/highlight)
+   - #F3F4F4 - Off-white (text/light elements)
+*/
+
+:root {
+    --lynx-bg-dark: #061E29;
+    --lynx-bg-card: #1D546D;
+    --lynx-accent: #5F9598;
+    --lynx-text-light: #F3F4F4;
+    --lynx-text-muted: #8DA8B0;
+    --lynx-border: #2D6680;
+
+    /* Status colors */
+    --lynx-success: #4CAF7A;
+    --lynx-warning: #E8B84A;
+    --lynx-danger: #E85A5A;
+    --lynx-info: #5F9598;
+}
+
+/* Global body styling */
+body {
+    background-color: var(--lynx-bg-dark) !important;
+    color: var(--lynx-text-light) !important;
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    overflow-x: hidden;
+}
+
+/* Override Bootstrap dark theme */
+.bg-dark {
+    background-color: var(--lynx-bg-card) !important;
+}
+
+.bg-secondary-dark {
+    background-color: var(--lynx-bg-dark) !important;
+}
+
+/* Sidebar Styling */
+.sidebar {
+    /* Fixed positioning handled by column wrapper, this is for inner styling */
+    background-color: var(--lynx-bg-card) !important;
+    border-right: 1px solid var(--lynx-border) !important;
+    height: 100%;
+}
+
+.sidebar-col {
+    background-color: var(--lynx-bg-card) !important;
+    box-shadow: 4px 0 10px rgba(0, 0, 0, 0.1);
+    z-index: 1000;
+}
+
+.sidebar-link {
+    color: var(--lynx-text-muted) !important;
+    border-radius: 8px;
+    padding: 0.8rem 1rem !important;
+    font-weight: 500;
+    transition: all 0.2s ease;
+    border: 1px solid transparent;
+}
+
+.sidebar-link:hover {
+    color: var(--lynx-text-light) !important;
+    background-color: rgba(95, 149, 152, 0.1);
+    transform: translateX(5px);
+    border-color: rgba(95, 149, 152, 0.2);
+}
+
+.sidebar-link.active {
+    background-color: var(--lynx-accent) !important;
+    color: var(--lynx-bg-dark) !important;
+    box-shadow: 0 4px 15px rgba(95, 149, 152, 0.3);
+    font-weight: 600;
+}
+
+/* Card styling */
+.card {
+    background-color: var(--lynx-bg-card) !important;
+    border: 1px solid var(--lynx-border) !important;
+    border-radius: 12px !important;
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
+    transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+.card:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 8px 30px rgba(0, 0, 0, 0.4);
+}
+
+.card-header {
+    background-color: rgba(6, 30, 41, 0.5) !important;
+    border-bottom: 1px solid var(--lynx-border) !important;
+    color: var(--lynx-text-light) !important;
+    font-weight: 600;
+}
+
+.card-body {
+    color: var(--lynx-text-light) !important;
+}
+
+/* Asset cards hover effect */
+.asset-card {
+    transition: all 0.3s ease;
+    border: 1px solid transparent !important;
+}
+
+.asset-card:hover {
+    border-color: var(--lynx-accent) !important;
+    box-shadow: 0 0 20px rgba(95, 149, 152, 0.3);
+}
+
+/* Status dot indicator */
+.status-dot {
+    display: inline-block;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    animation: pulse 2s infinite;
+}
+
+@keyframes pulse {
+    0% {
+        opacity: 1;
+    }
+
+    50% {
+        opacity: 0.5;
+    }
+
+    100% {
+        opacity: 1;
+    }
+}
+
+/* Button styling */
+.btn-primary {
+    background-color: var(--lynx-accent) !important;
+    border-color: var(--lynx-accent) !important;
+    color: var(--lynx-bg-dark) !important;
+    font-weight: 600;
+}
+
+.btn-primary:hover {
+    background-color: #4D8385 !important;
+    border-color: #4D8385 !important;
+}
+
+.btn-outline-primary {
+    border-color: var(--lynx-accent) !important;
+    color: var(--lynx-accent) !important;
+}
+
+.btn-outline-primary:hover {
+    background-color: var(--lynx-accent) !important;
+    color: var(--lynx-bg-dark) !important;
+}
+
+.btn-danger {
+    background-color: var(--lynx-danger) !important;
+    border-color: var(--lynx-danger) !important;
+}
+
+.btn-success {
+    background-color: var(--lynx-success) !important;
+    border-color: var(--lynx-success) !important;
+}
+
+/* Table styling */
+.table {
+    color: var(--lynx-text-light) !important;
+}
+
+.table-dark {
+    background-color: var(--lynx-bg-card) !important;
+}
+
+.table-dark th,
+.table-dark td {
+    border-color: var(--lynx-border) !important;
+    color: var(--lynx-text-light) !important;
+}
+
+.table-dark tbody tr:hover {
+    background-color: rgba(95, 149, 152, 0.1) !important;
+}
+
+/* Badge styling */
+.badge {
+    font-weight: 500;
+}
+
+.badge.bg-primary {
+    background-color: var(--lynx-accent) !important;
+    color: var(--lynx-bg-dark) !important;
+}
+
+.badge.bg-info {
+    background-color: var(--lynx-accent) !important;
+    color: var(--lynx-bg-dark) !important;
+}
+
+.badge.bg-dark {
+    background-color: var(--lynx-bg-dark) !important;
+    color: var(--lynx-text-light) !important;
+}
+
+.badge.bg-success {
+    background-color: var(--lynx-success) !important;
+}
+
+.badge.bg-warning {
+    background-color: var(--lynx-warning) !important;
+    color: var(--lynx-bg-dark) !important;
+}
+
+.badge.bg-danger {
+    background-color: var(--lynx-danger) !important;
+}
+
+/* Form controls */
+.form-control,
+.form-select {
+    background-color: var(--lynx-bg-dark) !important;
+    border-color: var(--lynx-border) !important;
+    color: var(--lynx-text-light) !important;
+}
+
+.form-control:focus,
+.form-select:focus {
+    border-color: var(--lynx-accent) !important;
+    box-shadow: 0 0 0 0.25rem rgba(95, 149, 152, 0.25) !important;
+}
+
+.form-control::placeholder {
+    color: var(--lynx-text-muted) !important;
+}
+
+.input-group-text {
+    background-color: var(--lynx-bg-dark) !important;
+    border-color: var(--lynx-border) !important;
+    color: var(--lynx-text-muted) !important;
+}
+
+/* Dropdown styling */
+.dropdown-menu {
+    background-color: var(--lynx-bg-card) !important;
+    border-color: var(--lynx-border) !important;
+}
+
+.dropdown-item {
+    color: var(--lynx-text-light) !important;
+}
+
+.dropdown-item:hover {
+    background-color: var(--lynx-accent) !important;
+    color: var(--lynx-bg-dark) !important;
+}
+
+/* Alert styling */
+.alert-dark {
+    background-color: var(--lynx-bg-dark) !important;
+    border-color: var(--lynx-border) !important;
+    color: var(--lynx-text-light) !important;
+}
+
+/* List group styling */
+.list-group-item {
+    background-color: var(--lynx-bg-card) !important;
+    border-color: var(--lynx-border) !important;
+    color: var(--lynx-text-light) !important;
+}
+
+.list-group-item:hover {
+    background-color: rgba(95, 149, 152, 0.1) !important;
+}
+
+/* Text utilities */
+.text-muted {
+    color: var(--lynx-text-muted) !important;
+}
+
+.text-white {
+    color: var(--lynx-text-light) !important;
+}
+
+/* Main content area */
+.main-content {
+    min-height: 100vh;
+}
+
+/* Scrollbar styling */
+::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+}
+
+::-webkit-scrollbar-track {
+    background: var(--lynx-bg-dark);
+}
+
+::-webkit-scrollbar-thumb {
+    background: var(--lynx-border);
+    border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+    background: var(--lynx-accent);
+}
+
+/* Tabs styling */
+.nav-tabs {
+    border-bottom-color: var(--lynx-border) !important;
+}
+
+.nav-tabs .nav-link {
+    color: var(--lynx-text-muted) !important;
+    border-color: transparent !important;
+}
+
+.nav-tabs .nav-link:hover {
+    border-color: var(--lynx-border) var(--lynx-border) transparent !important;
+    color: var(--lynx-text-light) !important;
+}
+
+.nav-tabs .nav-link.active {
+    background-color: var(--lynx-bg-card) !important;
+    color: var(--lynx-text-light) !important;
+    border-color: var(--lynx-border) var(--lynx-border) var(--lynx-bg-card) !important;
+}
+
+/* Progress bar */
+.progress {
+    background-color: var(--lynx-bg-dark) !important;
+}
+
+.progress-bar {
+    background-color: var(--lynx-accent) !important;
+}
+
+/* Modal styling */
+.modal-content {
+    background-color: var(--lynx-bg-card) !important;
+    border-color: var(--lynx-border) !important;
+}
+
+.modal-header {
+    border-bottom-color: var(--lynx-border) !important;
+}
+
+.modal-footer {
+    border-top-color: var(--lynx-border) !important;
+}
+
+/* DataTable styling (Dash) */
+.dash-table-container {
+    background-color: var(--lynx-bg-card) !important;
+    border-radius: 8px;
+    overflow: hidden;
+}
+
+.dash-spreadsheet-container .dash-spreadsheet-inner th {
+    background-color: var(--lynx-bg-dark) !important;
+    color: var(--lynx-text-light) !important;
+}
+
+.dash-spreadsheet-container .dash-spreadsheet-inner td {
+    background-color: var(--lynx-bg-card) !important;
+    color: var(--lynx-text-light) !important;
+    border-color: var(--lynx-border) !important;
+}
+
+/* Chart container styling */
+.js-plotly-plot .plotly {
+    background-color: transparent !important;
+}
+
+/* Heading styles */
+h1,
+h2,
+h3,
+h4,
+h5,
+h6 {
+    color: var(--lynx-text-light) !important;
+}
+
+/* Link styling */
+a {
+    color: var(--lynx-accent);
+    text-decoration: none;
+}
+
+a:hover {
+    color: #7DB0B3;
+}
+
+/* Selection styling */
+::selection {
+    background-color: var(--lynx-accent);
+    color: var(--lynx-bg-dark);
+}

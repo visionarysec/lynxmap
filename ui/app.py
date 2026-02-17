@@ -61,8 +61,8 @@ app.layout = dbc.Container([
                 dcc.Store(id="inventory-store", storage_type="session"),
                 dcc.Store(id="scan-results-store", storage_type="session"),
                 
-                # Interval for auto-refresh (disabled by default - 5 min interval)
-                dcc.Interval(id="auto-refresh", interval=300000, disabled=True),
+                # Interval for auto-refresh (2 sec interval for progress updates)
+                dcc.Interval(id="auto-refresh", interval=2000, disabled=False),
             ],
             width=10,
             className="px-0 bg-secondary-dark min-vh-100"

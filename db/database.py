@@ -350,6 +350,32 @@ def import_compartments_from_csv(csv_path: str) -> int:
     return len(compartments)
 
 
+def import_compartments(compartments: List[Dict]) -> int:
+    """
+    Import list of compartment dictionaries into database
+    """
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        
+        count = 0
+        for comp in compartments:
+            try:
+                cursor.execute("""
+                    INSERT INTO compartments (compartment_id, name, parent_id)
+                    VALUES (?, ?, ?)
+                    ON CONFLICT(compartment_id) DO UPDATE SET
+                        name = excluded.name,
+                        parent_id = excluded.parent_id
+                """, (comp['id'], comp['name'], comp.get('parent_compartment_id')))
+                count += 1
+            except Exception as e:
+                print(f"Error importing compartment {comp.get('name')}: {e}")
+        
+        conn.commit()
+    
+    return count
+
+
 def get_compartments_for_sunburst() -> Dict[str, Any]:
     """Get compartment hierarchy data for sunburst chart"""
     with get_connection() as conn:
@@ -362,28 +388,35 @@ def get_compartments_for_sunburst() -> Dict[str, Any]:
     labels = []
     parents = []
     
-    # Find all unique parent IDs to identify the tenancy root
-    all_ids = set(row['compartment_id'] for row in rows)
-    parent_ids = set(row['parent_id'] for row in rows if row['parent_id'])
+    # Set of all known compartment IDs
+    all_known_ids = set(row['compartment_id'] for row in rows)
     
-    # Find root (tenancy) - parent that's not in all_ids
+    # Find the actual Tenancy root (node with no parent)
     tenancy_id = None
-    for pid in parent_ids:
-        if pid and pid not in all_ids:
-            tenancy_id = pid
+    for row in rows:
+        if not row['parent_id']:
+            tenancy_id = row['compartment_id']
             break
-    
-    # Add tenancy root
-    if tenancy_id:
-        ids.append(tenancy_id)
-        labels.append("OCI Tenancy")
-        parents.append("")
-    
-    # Add all compartments
+            
+    # Add all known compartments
     for row in rows:
         ids.append(row['compartment_id'])
         labels.append(row['name'])
+        # If parent is empty, keep it empty (root)
         parents.append(row['parent_id'] if row['parent_id'] else "")
+        
+    # Handle missing parents (orphans' parents that aren't in the DB)
+    # Get all distinct parent IDs referenced by children
+    referenced_parents = set(row['parent_id'] for row in rows if row['parent_id'])
+    
+    for pid in referenced_parents:
+        if pid not in all_known_ids:
+            # This parent is referenced but not in our DB
+            ids.append(pid)
+            labels.append(f"Unknown Parent ({pid[-6:]})")
+            # Link to tenancy if we have one, otherwise make it a root
+            parents.append(tenancy_id if tenancy_id else "")
+            all_known_ids.add(pid) # Mark as handled
     
     return {
         'ids': ids,

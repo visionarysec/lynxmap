@@ -363,13 +363,89 @@ def layout():
 # Callbacks
 @callback(
     Output("total-assets-badge", "children"),
-    Input("refresh-btn", "n_clicks"),
+    Input("auto-refresh", "n_intervals"),
     prevent_initial_call=False
 )
-def update_total_badge(_):
-    """Update the total assets badge"""
-    total = get_total_asset_count()
-    return dbc.Badge(f"{total:,} Total Assets", color="info", className="p-2")
+def update_progress_status(_):
+    """Update the status badge and progress"""
+    from pathlib import Path
+    
+    LOCK_FILE = Path(".sync_lock")
+    is_syncing = LOCK_FILE.exists()
+    
+    # Get total assets
+    total_assets = get_total_asset_count()
+    
+    # Calculate progress based on unique compartments in assets vs total compartments
+    # This is an approximation since we don't track per-compartment status in DB yet
+    try:
+        from db.database import get_connection
+        with get_connection() as conn:
+            # Total expected compartments
+            cursor = conn.cursor()
+            cursor.execute("SELECT COUNT(*) as count FROM compartments")
+            result = cursor.fetchone()
+            total_comps = result['count'] if result else 0
+            
+            if total_comps == 0:
+                progress = 0
+            else:
+                # Compartments that have assets (scanned)
+                cursor.execute("SELECT COUNT(DISTINCT compartment) as count FROM assets")
+                result = cursor.fetchone()
+                scanned_comps = result['count'] if result else 0
+                progress = min(100, int((scanned_comps / total_comps) * 100))
+    except Exception as e:
+        print(f"Error calculating progress: {e}")
+        progress = 0
+        total_comps = 0
+    
+    if is_syncing:
+        return html.Div([
+            dbc.Badge(f"{total_assets:,} Assets", color="info", className="me-2"),
+            dbc.Badge(f"Syncing: {progress}%", color="warning", className="me-2"),
+            dbc.Progress(value=progress, striped=True, animated=True, style={"width": "100px", "display": "inline-block", "vertical-align": "middle"})
+        ])
+    else:
+        return dbc.Badge(f"{total_assets:,} Total Assets", color="success", className="p-2")
+
+
+@callback(
+    [Output("refresh-btn", "children"),
+     Output("refresh-btn", "disabled")],
+    [Input("refresh-btn", "n_clicks"),
+     Input("auto-refresh", "n_intervals")],
+    prevent_initial_call=False
+)
+def handle_sync_button(n_clicks, n_intervals):
+    """Handle sync button state and trigger sync process"""
+    import subprocess
+    import sys
+    from pathlib import Path
+    
+    LOCK_FILE = Path(".sync_lock")
+    
+    # Check if sync is running via lock file
+    is_syncing = LOCK_FILE.exists()
+    
+    ctx = dash.callback_context
+    triggered_id = ctx.triggered[0]['prop_id'].split('.')[0] if ctx.triggered else None
+    
+    # If button clicked and not already syncing, start sync
+    if triggered_id == "refresh-btn" and n_clicks and not is_syncing:
+        try:
+            # Spawn sync process
+            subprocess.Popen([sys.executable, "sync.py"])
+            return [dbc.Spinner(size="sm", spinner_class_name="me-2"), "Syncing..."], True
+        except Exception as e:
+            print(f"Error starting sync: {e}")
+            return [html.I(className="fas fa-exclamation-triangle me-2"), "Error"], False
+
+    # Update state based on lock file
+    if is_syncing:
+        return [dbc.Spinner(size="sm", spinner_class_name="me-2"), "Syncing..."], True
+    
+    return [html.I(className="fas fa-sync-alt me-2"), "Sync & Refresh"], False
 
 
 @callback(
@@ -378,11 +454,23 @@ def update_total_badge(_):
      Output("compartment-chart", "figure"),
      Output("region-chart", "figure"),
      Output("recent-assets-table", "children")],
-    Input("refresh-btn", "n_clicks"),
-    prevent_initial_call=True
+    [Input("refresh-btn", "n_clicks"),
+     Input("auto-refresh", "n_intervals")], # Auto-refresh charts when sync finishes? Or periodically?
+    prevent_initial_call=False
 )
-def refresh_data(_):
-    """Refresh all dashboard data"""
+def update_charts(n_clicks, n_intervals):
+    """Update charts.
+    We trigger on n_intervals too so that when sync finishes, the charts update automatically.
+    This might be heavy (every 2s). We can optimize checking if data changed.
+    For now, let's only limit it to every 5 intervals (10s) or just keeping it simple.
+    The user wants 'Sync button ... not well updated', implying the feedback loop.
+    Let's trigger on n_intervals but maybe check if we SHOULD update?
+    Database queries are relatively fast for small datasets.
+    """
+    
+    # Optional: We could check if DB was updated recently.
+    # For now, just refreshing is safe.
+    
     return (
         create_asset_summary_cards(),
         create_asset_distribution_chart(),

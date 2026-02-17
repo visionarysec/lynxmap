@@ -62,15 +62,18 @@ class OCICollector:
             logger.error(f"Error setting up OCI clients: {e}")
             self.config = None
     
-    def collect_all(self) -> List[Dict]:
-        """Collect all resources from OCI and normalize to standard asset format"""
+    def collect_all(self):
+        """
+        Collect all resources from OCI and normalize to standard asset format.
+        Yields batches of assets as they are collected.
+        """
         config = self.config
         if not config:
             logger.info("Using mock data for collection")
-            return self._get_mock_data_assets()
-        
+            yield self._get_mock_data_assets()
+            return
+
         logger.info("Starting full OCI collection...")
-        all_assets = []
         
         # 1. Collect Compartments (Foundation)
         self.compartments = self._collect_compartment_details()
@@ -81,15 +84,18 @@ class OCICollector:
         tenancy_id = config.get("tenancy")
         if not tenancy_id: # Safety check
              logger.error("No tenancy ID found in config")
-             return []
+             return
 
         # Global Resources
-        all_assets.extend(self._collect_users())
-        all_assets.extend(self._collect_groups())
-        all_assets.extend(self._collect_policies())
+        global_assets = []
+        global_assets.extend(self._collect_users())
+        global_assets.extend(self._collect_groups())
+        global_assets.extend(self._collect_policies())
+        if global_assets:
+            yield global_assets
         
         # Regional Resources (per compartment)
-        for comp in self.compartments:
+        for i, comp in enumerate(self.compartments):
             comp_id = comp['id']
             comp_name = comp['name']
             
@@ -98,26 +104,32 @@ class OCICollector:
                 continue
                 
             try:
+                compartment_assets = []
                 # Compute
-                all_assets.extend(self._collect_instances(comp_id, comp_name))
+                compartment_assets.extend(self._collect_instances(comp_id, comp_name))
                 
                 # Network
-                all_assets.extend(self._collect_vcns(comp_id, comp_name))
-                all_assets.extend(self._collect_subnets(comp_id, comp_name))
-                all_assets.extend(self._collect_network_security_groups(comp_id, comp_name))
-                all_assets.extend(self._collect_security_lists(comp_id, comp_name))
+                compartment_assets.extend(self._collect_vcns(comp_id, comp_name))
+                compartment_assets.extend(self._collect_subnets(comp_id, comp_name))
+                compartment_assets.extend(self._collect_network_security_groups(comp_id, comp_name))
+                compartment_assets.extend(self._collect_security_lists(comp_id, comp_name))
                 
                 # Storage
-                all_assets.extend(self._collect_buckets(comp_id, comp_name))
+                compartment_assets.extend(self._collect_buckets(comp_id, comp_name))
                 
                 # Load Balancers
-                all_assets.extend(self._collect_load_balancers(comp_id, comp_name))
+                compartment_assets.extend(self._collect_load_balancers(comp_id, comp_name))
+                
+                if compartment_assets:
+                    yield compartment_assets
+                    
+                # Log progress periodically
+                if (i + 1) % 5 == 0:
+                    logger.info(f"Processed {i + 1}/{len(self.compartments)} compartments")
                 
             except Exception as e:
                 logger.error(f"Error collecting resources in compartment {comp_name}: {e}")
-        
-        logger.info(f"Collection complete. Total assets: {len(all_assets)}")
-        return all_assets
+
 
     def _collect_compartment_details(self) -> List[Dict]:
         """Collect raw compartment hierarchy"""

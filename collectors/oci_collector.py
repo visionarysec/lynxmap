@@ -58,6 +58,22 @@ class OCICollector:
                 "database": oci.database.DatabaseClient(self.config),
                 "load_balancer": oci.load_balancer.LoadBalancerClient(self.config),
             }
+
+            # Increase connection pool for parallel scanning workloads
+            # Default pool_maxsize=10 is too small for concurrent operations
+            try:
+                import requests.adapters
+                adapter = requests.adapters.HTTPAdapter(
+                    pool_connections=50,
+                    pool_maxsize=50,
+                )
+                for client in self.clients.values():
+                    if hasattr(client, "base_client") and hasattr(client.base_client, "session"):
+                        client.base_client.session.mount("https://", adapter)
+                logger.debug("Connection pool increased to 50 for all OCI clients")
+            except Exception:
+                pass  # non-critical — pool warnings are harmless
+
         except Exception as e:
             logger.error(f"Error setting up OCI clients: {e}")
             self.config = None

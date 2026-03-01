@@ -1,12 +1,40 @@
 """
 LynxMap - Playbooks Page (Security Scanning Interface)
-Interface for running CIS benchmarks and viewing scan results
+Interface for running CIS benchmarks, viewing scan results,
+and running the Secret Scanner against OCI Object Storage buckets.
 """
 
 import dash
-from dash import html, dcc, callback, Input, Output, State
+from dash import html, dcc, callback, Input, Output, State, no_update, ctx
 import dash_bootstrap_components as dbc
 from datetime import datetime
+from urllib.parse import quote as urlquote
+
+# Import the secret scanner
+from playbooks.secret_scanner import SecretScanner, run_secret_scan
+from playbooks.cis_benchmark import CISBenchmarkRunner, run_cis_benchmark
+from collectors.oci_collector import OCICollector
+import logging
+import threading
+
+logger = logging.getLogger(__name__)
+
+# Global state for background secret scan
+_bg_scan_state = {
+    "running": False,
+    "report": None,
+    "error": None,
+    "progress": "",           # latest progress message
+    "compartment_ids": None,  # list of OCIDs or None (all)
+}
+
+# Global state for background CIS benchmark scan
+_bg_cis_state = {
+    "running": False,
+    "report": None,
+    "error": None,
+    "progress": "",
+}
 
 # Register this page
 dash.register_page(__name__, path="/playbooks", name="Playbooks", title="LynxMap - Security Playbooks")
@@ -34,6 +62,16 @@ def get_available_playbooks():
             "severity": "high",
             "last_run": "2024-01-16 09:15:00",
             "status": "failed"
+        },
+        {
+            "id": "secret_scanner",
+            "name": "Secret Scanner",
+            "description": "Scans all OCI Object Storage buckets for sensitive files such as credentials, private keys, config files, and database dumps — with no time restrictions.",
+            "checks": "All Objects",
+            "categories": ["Storage", "Secrets"],
+            "severity": "critical",
+            "last_run": None,
+            "status": "never_run"
         },
         {
             "id": "iam_audit",
@@ -211,7 +249,174 @@ def create_scan_summary():
     ], className="mb-4")
 
 
-# Page layout
+def _format_file_size(size_bytes):
+    """Convert bytes to a human-readable string."""
+    if size_bytes is None:
+        return "—"
+    for unit in ("B", "KB", "MB", "GB"):
+        if abs(size_bytes) < 1024:
+            return f"{size_bytes:.1f} {unit}"
+        size_bytes /= 1024.0
+    return f"{size_bytes:.1f} TB"
+
+
+def _get_compartment_options():
+    """Load compartment options from the database for the picker."""
+    try:
+        from db.database import get_connection
+        with get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT compartment_id, name FROM compartments ORDER BY name"
+            )
+            return [
+                {"label": row["name"], "value": row["compartment_id"]}
+                for row in cursor.fetchall()
+            ]
+    except Exception:
+        return []
+
+
+def create_secret_scanner_tab():
+    """Create the Secret Scanner tab content with compartment picker and results area."""
+    compartment_options = _get_compartment_options()
+
+    return html.Div([
+        # Header row
+        dbc.Row([
+            dbc.Col([
+                html.Div([
+                    html.I(className="fas fa-user-secret me-2",
+                           style={"fontSize": "1.4rem"}),
+                    html.H4("Secret Scanner", className="d-inline mb-0 text-white"),
+                ], className="d-flex align-items-center"),
+                html.P(
+                    "Scans OCI Object Storage buckets for secrets using "
+                    "filename-pattern matching. Select specific compartments "
+                    "below or leave empty to scan all.",
+                    className="text-muted mt-2 mb-0",
+                ),
+            ], md=8),
+            dbc.Col([
+                dbc.Button([
+                    html.I(className="fas fa-search me-2", id="secret-scan-icon"),
+                    "Run Secret Scan"
+                ], id="run-secret-scan-btn", color="danger", size="lg",
+                   className="float-end"),
+            ], md=4, className="d-flex align-items-center justify-content-end"),
+        ], className="mb-3"),
+
+        # Compartment picker
+        dbc.Row([
+            dbc.Col([
+                dbc.Label(
+                    [html.I(className="fas fa-sitemap me-2"), "Compartments"],
+                    className="text-muted mb-1",
+                    style={"fontSize": "0.85rem"},
+                ),
+                dcc.Dropdown(
+                    id="secret-scan-compartment-picker",
+                    options=compartment_options,
+                    value=[],
+                    multi=True,
+                    placeholder="All compartments (leave empty to scan all)",
+                    style={
+                        "backgroundColor": "#2b3035",
+                        "color": "#fff",
+                    },
+                    className="dash-dark-dropdown",
+                ),
+            ], md=12),
+        ], className="mb-3"),
+
+        # Live progress area
+        html.Div(id="secret-scan-progress", className="mb-3"),
+
+        # Summary cards (populated by callback)
+        html.Div(id="secret-scan-summary"),
+
+        # Findings table (populated by callback)
+        html.Div(id="secret-scan-results", children=[
+            dbc.Card([
+                dbc.CardBody([
+                    html.Div([
+                        html.I(className="fas fa-info-circle text-muted me-2",
+                               style={"fontSize": "2rem"}),
+                        html.Span(
+                            'Select compartments (or leave empty for all), '
+                            'then click "Run Secret Scan".',
+                            className="text-muted",
+                        ),
+                    ], className="text-center py-5 d-flex align-items-center justify-content-center"),
+                ])
+            ], className="bg-dark border-secondary")
+        ]),
+
+        # Polling interval (disabled by default, enabled during scan)
+        dcc.Interval(id="secret-scan-poll", interval=2000, disabled=True),
+        # Store to trigger result rendering
+        dcc.Store(id="secret-scan-report-store", data=None),
+    ], className="mt-3")
+
+
+def _create_cis_benchmark_tab():
+    """Build the CIS Benchmark tab layout."""
+    return html.Div([
+        dbc.Row([
+            dbc.Col([
+                dbc.Card([
+                    dbc.CardBody([
+                        html.Div([
+                            html.I(className="fas fa-shield-alt me-2",
+                                   style={"fontSize": "1.6rem", "color": "#00d4ff"}),
+                            html.Span("CIS OCI Foundations Benchmark v2.0",
+                                      style={"fontSize": "1.2rem", "fontWeight": "600"}),
+                        ], className="d-flex align-items-center mb-3"),
+                        html.P(
+                            "Runs 19 automated security checks across IAM, Networking, "
+                            "Storage, Compute, and Logging against your live OCI tenancy.",
+                            className="text-muted mb-3",
+                        ),
+                        dbc.Row([
+                            dbc.Col([
+                                dbc.Badge("7 IAM", color="primary", className="me-1"),
+                                dbc.Badge("4 Networking", color="info", className="me-1"),
+                                dbc.Badge("3 Storage", color="warning", className="me-1"),
+                                dbc.Badge("3 Compute", color="success", className="me-1"),
+                                dbc.Badge("2 Logging", color="secondary"),
+                            ]),
+                            dbc.Col([
+                                dbc.Button([
+                                    html.I(className="fas fa-play me-2"),
+                                    "Run CIS Benchmark",
+                                ], id="cis-run-btn", color="primary",
+                                   className="float-end"),
+                            ], className="text-end"),
+                        ]),
+                    ])
+                ], className="bg-dark border-secondary mb-3"),
+            ])
+        ]),
+
+        # Progress bar
+        html.Div(id="cis-progress-area", children=[], className="mb-3"),
+
+        # Poll timer (disabled by default)
+        dcc.Interval(
+            id="cis-poll-interval",
+            interval=1500,
+            disabled=True,
+        ),
+
+        # Store for completed report
+        dcc.Store(id="cis-report-store"),
+
+        # Results placeholder
+        html.Div(id="cis-results-area", children=[]),
+    ], className="mt-3")
+
+
+# ─── Page layout ──────────────────────────────────────────────────────────────────
 layout = dbc.Container([
     # Header
     dbc.Row([
@@ -328,7 +533,21 @@ layout = dbc.Container([
                 ], className="bg-dark border-secondary")
             ], className="mt-3")
         ], label="Results", tab_id="results-tab"),
+
+        # ── Secret Scanner tab ──────────────────────────────────────────────
+        dbc.Tab(
+            create_secret_scanner_tab(),
+            label="Secret Scanner",
+            tab_id="secret-scanner-tab",
+        ),
         
+        # ── CIS Benchmark tab ────────────────────────────────────────────────
+        dbc.Tab(
+            _create_cis_benchmark_tab(),
+            label="CIS Benchmark",
+            tab_id="cis-benchmark-tab",
+        ),
+
         # Custom playbook tab
         dbc.Tab([
             dbc.Row([
@@ -417,7 +636,8 @@ checks:
 ], fluid=True)
 
 
-# Callbacks
+# ─── Callbacks ────────────────────────────────────────────────────────────────
+
 @callback(
     Output("scan-modal", "is_open"),
     Input("run-all-btn", "n_clicks"),
@@ -428,3 +648,670 @@ checks:
 def toggle_scan_modal(run_clicks, cancel_clicks, is_open):
     """Toggle the scan progress modal"""
     return not is_open
+
+
+def _bg_scan_worker():
+    """Background worker that runs the secret scan."""
+    try:
+        collector = OCICollector()
+        if not collector.config:
+            logger.info("OCI not configured — falling back to mock data")
+            collector = None
+    except Exception as e:
+        logger.warning("Could not create OCI collector: %s — using mock data", e)
+        collector = None
+
+    def _on_progress(msg):
+        _bg_scan_state["progress"] = msg
+
+    comp_ids = _bg_scan_state.get("compartment_ids") or None
+
+    try:
+        report = run_secret_scan(
+            collector=collector,
+            compartment_ids=comp_ids,
+            progress_callback=_on_progress,
+        )
+        _bg_scan_state["report"] = report
+        _bg_scan_state["error"] = None
+    except Exception as e:
+        logger.error("Background secret scan failed: %s", e)
+        _bg_scan_state["report"] = None
+        _bg_scan_state["error"] = str(e)
+    finally:
+        _bg_scan_state["running"] = False
+
+
+# ── Callback 1: Start scan (button click → launch thread + show spinner) ──
+@callback(
+    Output("run-secret-scan-btn", "disabled", allow_duplicate=True),
+    Output("run-secret-scan-btn", "children", allow_duplicate=True),
+    Output("secret-scan-poll", "disabled"),
+    Output("secret-scan-summary", "children", allow_duplicate=True),
+    Output("secret-scan-results", "children", allow_duplicate=True),
+    Output("secret-scan-progress", "children", allow_duplicate=True),
+    Input("run-secret-scan-btn", "n_clicks"),
+    State("secret-scan-compartment-picker", "value"),
+    prevent_initial_call=True,
+)
+def start_secret_scan(n_clicks, selected_compartments):
+    """Launch the secret scan in a background thread."""
+    if not n_clicks or _bg_scan_state["running"]:
+        return (no_update,) * 6
+
+    # Reset state and store selected compartments
+    _bg_scan_state["running"] = True
+    _bg_scan_state["report"] = None
+    _bg_scan_state["error"] = None
+    _bg_scan_state["progress"] = "Initializing…"
+    _bg_scan_state["compartment_ids"] = (
+        selected_compartments if selected_compartments else None
+    )
+
+    t = threading.Thread(target=_bg_scan_worker, daemon=True)
+    t.start()
+
+    # Show progress UI
+    btn_children = [
+        dbc.Spinner(size="sm", spinner_class_name="me-2"),
+        "Scanning…",
+    ]
+
+    scope = (
+        f"{len(selected_compartments)} selected compartment(s)"
+        if selected_compartments
+        else "all active compartments"
+    )
+
+    progress_bar = html.Div([
+        dbc.Card([
+            dbc.CardBody([
+                html.Div([
+                    dbc.Spinner(color="danger", type="grow", size="sm",
+                                spinner_class_name="me-3"),
+                    html.Span(
+                        f"Scanning {scope} — please wait…",
+                        className="text-warning",
+                    ),
+                ], className="d-flex align-items-center"),
+                html.Div(
+                    "Initializing…",
+                    id="secret-scan-progress-text",
+                    className="text-muted mt-2",
+                    style={"fontSize": "0.85rem", "fontFamily": "monospace"},
+                ),
+            ])
+        ], className="bg-dark border-warning"),
+    ])
+
+    # Enable polling, disable button, show spinner
+    return True, btn_children, False, html.Div(), html.Div(), progress_bar
+
+
+# ── Callback 2: Poll for results + update progress ───────────────────────
+@callback(
+    Output("secret-scan-report-store", "data"),
+    Output("secret-scan-poll", "disabled", allow_duplicate=True),
+    Output("secret-scan-progress", "children", allow_duplicate=True),
+    Input("secret-scan-poll", "n_intervals"),
+    prevent_initial_call=True,
+)
+def poll_secret_scan(n_intervals):
+    """Check if the background scan has completed and relay progress."""
+    progress_msg = _bg_scan_state.get("progress", "")
+
+    progress_ui = html.Div([
+        dbc.Card([
+            dbc.CardBody([
+                html.Div([
+                    dbc.Spinner(color="danger", type="grow", size="sm",
+                                spinner_class_name="me-3"),
+                    html.Span("Scanning…", className="text-warning"),
+                ], className="d-flex align-items-center"),
+                html.Div(
+                    progress_msg or "Working…",
+                    className="text-muted mt-2",
+                    style={"fontSize": "0.85rem", "fontFamily": "monospace"},
+                ),
+            ])
+        ], className="bg-dark border-warning"),
+    ])
+
+    if _bg_scan_state["running"]:
+        # Still running — update progress, keep polling
+        return no_update, False, progress_ui
+
+    # Done — push results to store and stop polling
+    if _bg_scan_state["error"]:
+        return {"error": _bg_scan_state["error"]}, True, html.Div()
+
+    if _bg_scan_state["report"]:
+        return _bg_scan_state["report"], True, html.Div()
+
+    return no_update, True, html.Div()
+
+
+# ── Callback 3: Render results from store ─────────────────────────────────
+@callback(
+    Output("secret-scan-summary", "children"),
+    Output("secret-scan-results", "children"),
+    Output("run-secret-scan-btn", "disabled"),
+    Output("run-secret-scan-btn", "children"),
+    Input("secret-scan-report-store", "data"),
+    prevent_initial_call=True,
+)
+def render_secret_scan_results(report):
+    """Render the secret scan findings from the completed report."""
+    if not report:
+        return no_update, no_update, no_update, no_update
+
+    # Handle error case
+    if "error" in report:
+        error_card = dbc.Card([
+            dbc.CardBody([
+                html.Div([
+                    html.I(className="fas fa-times-circle text-danger me-2",
+                           style={"fontSize": "2rem"}),
+                    html.Span(f"Scan failed: {report['error']}", className="text-danger"),
+                ], className="text-center py-5 d-flex align-items-center justify-content-center")
+            ])
+        ], className="bg-dark border-danger")
+        btn_children = [html.I(className="fas fa-redo me-2"), "Retry Secret Scan"]
+        return html.Div(), error_card, False, btn_children
+
+    findings = report.get("findings", [])
+    total = report.get("total_findings", 0)
+    buckets_scanned = report.get("buckets_scanned", 0)
+    objects_scanned = report.get("objects_scanned", 0)
+    scan_mode = report.get("scan_mode", "pattern")
+
+    # Scan mode badge
+    mode_info = {
+        "trufflehog": ("🐷 TruffleHog", "danger"),
+        "pattern": ("📄 Pattern Match", "info"),
+        "mock": ("🧪 Mock Data", "secondary"),
+    }
+    mode_label, mode_color = mode_info.get(scan_mode, ("Unknown", "secondary"))
+
+    # Count by source
+    th_count = sum(1 for f in findings if f.get("source") == "trufflehog")
+    pat_count = sum(1 for f in findings if f.get("source") == "pattern")
+
+    # ── Summary cards ─────────────────────────────────────────────────────
+    summary = html.Div([
+        # Scan mode badge
+        dbc.Row([
+            dbc.Col([
+                dbc.Badge(
+                    mode_label,
+                    color=mode_color,
+                    className="me-2 p-2",
+                    style={"fontSize": "0.85rem"},
+                ),
+                dbc.Badge(
+                    f"TruffleHog: {th_count}",
+                    color="danger",
+                    className="me-1",
+                ) if th_count else html.Span(),
+                dbc.Badge(
+                    f"Pattern: {pat_count}",
+                    color="info",
+                    className="me-1",
+                ) if pat_count else html.Span(),
+            ], className="mb-2"),
+        ]),
+        dbc.Row([
+            dbc.Col(dbc.Card([
+                dbc.CardBody([
+                    html.H3(total, className="text-danger mb-0"),
+                    html.Small("Sensitive Files Found", className="text-muted"),
+                ], className="text-center py-2")
+            ], className="bg-dark border-danger"), md=3),
+            dbc.Col(dbc.Card([
+                dbc.CardBody([
+                    html.H3(buckets_scanned, className="text-info mb-0"),
+                    html.Small("Buckets Scanned", className="text-muted"),
+                ], className="text-center py-2")
+            ], className="bg-dark border-info"), md=3),
+            dbc.Col(dbc.Card([
+                dbc.CardBody([
+                    html.H3(objects_scanned, className="text-primary mb-0"),
+                    html.Small("Objects Inspected", className="text-muted"),
+                ], className="text-center py-2")
+            ], className="bg-dark border-primary"), md=3),
+            dbc.Col(dbc.Card([
+                dbc.CardBody([
+                    html.H3(
+                        len(set(f["bucket"] for f in findings)),
+                        className="text-warning mb-0",
+                    ),
+                    html.Small("Affected Buckets", className="text-muted"),
+                ], className="text-center py-2")
+            ], className="bg-dark border-warning"), md=3),
+        ], className="mb-4"),
+    ])
+
+    # ── Findings table ────────────────────────────────────────────────────
+    if not findings:
+        results_card = dbc.Card([
+            dbc.CardBody([
+                html.Div([
+                    html.I(className="fas fa-check-circle text-success me-2",
+                           style={"fontSize": "2rem"}),
+                    html.Span("No sensitive files found — your buckets look clean!",
+                              className="text-success"),
+                ], className="text-center py-5 d-flex align-items-center justify-content-center")
+            ])
+        ], className="bg-dark border-secondary")
+    else:
+        # Build OCI Console base URL from report metadata
+        ns = report.get("namespace", "")
+        region = report.get("region", "us-ashburn-1")
+
+        rows = []
+        for idx, f in enumerate(findings, start=1):
+            source = f.get("source", "pattern")
+            if source == "trufflehog":
+                source_badge = dbc.Badge(
+                    "🐷 TH", color="danger", className="px-2",
+                    style={"fontSize": "0.7rem"},
+                )
+            elif source == "content":
+                source_badge = dbc.Badge(
+                    "🔍 Content", color="warning", className="px-2",
+                    style={"fontSize": "0.7rem"},
+                )
+            else:
+                source_badge = dbc.Badge(
+                    "📄 Name", color="info", className="px-2",
+                    style={"fontSize": "0.7rem"},
+                )
+
+            # For content findings, show the redacted snippet
+            raw_snippet = f.get("raw_result", "")
+            finding_type_el = dbc.Badge(
+                f["finding_type"], color="danger", className="text-wrap",
+                style={"fontSize": "0.75rem"},
+                title=raw_snippet if raw_snippet else None,
+            )
+
+            # Local download route — streams the object via OCI SDK
+            bucket = f["bucket"]
+            obj_name = f["file_name"]
+            download_url = (
+                f"/download-object"
+                f"?ns={urlquote(ns, safe='')}"
+                f"&bucket={urlquote(bucket, safe='')}"
+                f"&object={urlquote(obj_name, safe='')}"
+                f"&region={urlquote(region, safe='')}"
+            )
+
+            rows.append(html.Tr([
+                html.Td(idx, className="text-muted"),
+                html.Td([
+                    html.I(className="fas fa-exclamation-triangle text-danger me-2"),
+                ]),
+                html.Td([
+                    html.Code(f["file_name"], className="text-warning"),
+                ]),
+                html.Td(f["bucket"]),
+                html.Td(f["compartment"]),
+                html.Td(finding_type_el),
+                html.Td(source_badge),
+                html.Td(_format_file_size(f.get("file_size"))),
+                html.Td(
+                    html.A(
+                        html.I(className="fas fa-download"),
+                        href=download_url,
+                        target="_blank",
+                        className="text-info",
+                        title=f"Download {obj_name}",
+                    ),
+                    className="text-center",
+                ),
+            ]))
+
+        results_card = dbc.Card([
+            dbc.CardHeader([
+                dbc.Row([
+                    dbc.Col([
+                        html.I(className="fas fa-exclamation-triangle text-danger me-2"),
+                        f"Sensitive Files Found — {total} result{'s' if total != 1 else ''}"
+                    ]),
+                    dbc.Col([
+                        html.Small(
+                            f"Scanned at {report.get('completed_at', '—')[:19].replace('T', ' ')}",
+                            className="text-muted float-end",
+                        )
+                    ], className="text-end"),
+                ])
+            ]),
+            dbc.CardBody([
+                dbc.Table([
+                    html.Thead(html.Tr([
+                        html.Th("#", style={"width": "40px"}),
+                        html.Th("", style={"width": "30px"}),
+                        html.Th("File Name"),
+                        html.Th("Bucket"),
+                        html.Th("Compartment"),
+                        html.Th("Type"),
+                        html.Th("Source", style={"width": "65px"}),
+                        html.Th("Size", style={"width": "90px"}),
+                        html.Th("Link", style={"width": "50px"}),
+                    ])),
+                    html.Tbody(rows),
+                ], bordered=True, color="dark", hover=True, responsive=True, size="sm",
+                   className="mb-0"),
+            ]),
+        ], className="bg-dark border-secondary")
+
+    # Reset button label
+    btn_children = [
+        html.I(className="fas fa-redo me-2"),
+        "Re-run Secret Scan",
+    ]
+
+    return summary, results_card, False, btn_children
+
+
+# ── CIS Callback 1: Start scan ───────────────────────────────────────────────
+@callback(
+    Output("cis-run-btn", "disabled", allow_duplicate=True),
+    Output("cis-run-btn", "children", allow_duplicate=True),
+    Output("cis-poll-interval", "disabled", allow_duplicate=True),
+    Input("cis-run-btn", "n_clicks"),
+    prevent_initial_call=True,
+)
+def start_cis_benchmark(n_clicks):
+    if not n_clicks:
+        return no_update, no_update, no_update
+    if _bg_cis_state["running"]:
+        return True, no_update, no_update
+
+    def _worker():
+        try:
+            _bg_cis_state["running"] = True
+            _bg_cis_state["report"] = None
+            _bg_cis_state["error"] = None
+            _bg_cis_state["progress"] = "Starting CIS benchmark…"
+
+            collector = None
+            try:
+                collector = OCICollector()
+                if not collector.config:
+                    collector = None
+            except Exception:
+                collector = None
+
+            def _on_progress(msg):
+                _bg_cis_state["progress"] = msg
+
+            result = run_cis_benchmark(
+                collector=collector,
+                progress_callback=_on_progress,
+            )
+            _bg_cis_state["report"] = result
+        except Exception as e:
+            _bg_cis_state["error"] = str(e)
+            logger.error("CIS benchmark error: %s", e)
+        finally:
+            _bg_cis_state["running"] = False
+
+    threading.Thread(target=_worker, daemon=True).start()
+
+    btn = [
+        dbc.Spinner(size="sm", spinner_class_name="me-2"),
+        "Running CIS Benchmark…",
+    ]
+    return True, btn, False   # disable btn, start polling
+
+
+# ── CIS Callback 2: Poll for results ─────────────────────────────────────────
+@callback(
+    Output("cis-report-store", "data"),
+    Output("cis-poll-interval", "disabled"),
+    Output("cis-progress-area", "children"),
+    Input("cis-poll-interval", "n_intervals"),
+    prevent_initial_call=True,
+)
+def poll_cis_benchmark(n_intervals):
+    progress_bar = dbc.Progress(
+        value=100, striped=True, animated=True, className="mb-2",
+        label=_bg_cis_state.get("progress", ""),
+        style={"height": "22px"},
+    )
+
+    if _bg_cis_state["running"]:
+        return no_update, False, progress_bar
+
+    report = _bg_cis_state.get("report")
+    if report:
+        return report, True, []   # stop polling, clear progress
+
+    error = _bg_cis_state.get("error")
+    if error:
+        return no_update, True, dbc.Alert(f"Error: {error}", color="danger")
+
+    return no_update, True, []
+
+
+# ── CIS Callback 3: Render results ───────────────────────────────────────────
+@callback(
+    Output("cis-results-area", "children"),
+    Output("cis-run-btn", "disabled", allow_duplicate=True),
+    Output("cis-run-btn", "children", allow_duplicate=True),
+    Input("cis-report-store", "data"),
+    prevent_initial_call=True,
+)
+def render_cis_results(report):
+    if not report:
+        return no_update, no_update, no_update
+
+    passed = report.get("passed", 0)
+    failed = report.get("failed", 0)
+    errors = report.get("errors", 0)
+    skipped = report.get("skipped", 0)
+    total = report.get("total_checks", 0)
+    pct = report.get("compliance_pct", 0)
+    scan_mode = report.get("scan_mode", "")
+
+    # ── Compliance score color ──
+    if pct >= 80:
+        score_color = "success"
+    elif pct >= 50:
+        score_color = "warning"
+    else:
+        score_color = "danger"
+
+    mode_badge = dbc.Badge(
+        scan_mode.upper(), color="info" if scan_mode == "live" else "secondary",
+        className="ms-2",
+    )
+
+    # ── Summary cards row ──
+    summary = dbc.Row([
+        dbc.Col(dbc.Card([
+            dbc.CardBody([
+                html.H2(f"{pct}%", className=f"text-{score_color} mb-0",
+                         style={"fontSize": "2.5rem", "fontWeight": "700"}),
+                html.Small("Compliance", className="text-muted"),
+            ], className="text-center py-2")
+        ], className="bg-dark border-secondary"), md=3),
+        dbc.Col(dbc.Card([
+            dbc.CardBody([
+                html.H2(str(passed), className="text-success mb-0",
+                         style={"fontSize": "2.5rem", "fontWeight": "700"}),
+                html.Small("Passed", className="text-muted"),
+            ], className="text-center py-2")
+        ], className="bg-dark border-secondary"), md=2),
+        dbc.Col(dbc.Card([
+            dbc.CardBody([
+                html.H2(str(failed), className="text-danger mb-0",
+                         style={"fontSize": "2.5rem", "fontWeight": "700"}),
+                html.Small("Failed", className="text-muted"),
+            ], className="text-center py-2")
+        ], className="bg-dark border-secondary"), md=2),
+        dbc.Col(dbc.Card([
+            dbc.CardBody([
+                html.H2(str(errors), className="text-warning mb-0",
+                         style={"fontSize": "2.5rem", "fontWeight": "700"}),
+                html.Small("Errors", className="text-muted"),
+            ], className="text-center py-2")
+        ], className="bg-dark border-secondary"), md=2),
+        dbc.Col(dbc.Card([
+            dbc.CardBody([
+                html.H2(str(total), className="text-info mb-0",
+                         style={"fontSize": "2.5rem", "fontWeight": "700"}),
+                html.Small(["Total Checks", mode_badge], className="text-muted"),
+            ], className="text-center py-2")
+        ], className="bg-dark border-secondary"), md=3),
+    ], className="mb-3")
+
+    # ── Category breakdown ──
+    categories = {}
+    for r in report.get("results", []):
+        cat = r.get("category", "Other")
+        if cat not in categories:
+            categories[cat] = {"pass": 0, "fail": 0, "error": 0}
+        if r["status"] == "PASS":
+            categories[cat]["pass"] += 1
+        elif r["status"] == "FAIL":
+            categories[cat]["fail"] += 1
+        else:
+            categories[cat]["error"] += 1
+
+    cat_badges = []
+    cat_icons = {
+        "Identity & Access Management": "fas fa-users-cog",
+        "Networking": "fas fa-network-wired",
+        "Storage": "fas fa-database",
+        "Compute": "fas fa-server",
+        "Logging & Monitoring": "fas fa-clipboard-list",
+    }
+    for cat, counts in categories.items():
+        icon = cat_icons.get(cat, "fas fa-check-circle")
+        cat_total = counts["pass"] + counts["fail"] + counts["error"]
+        cat_pass_pct = round(100 * counts["pass"] / cat_total) if cat_total else 0
+        color = "success" if cat_pass_pct >= 80 else ("warning" if cat_pass_pct >= 50 else "danger")
+        cat_badges.append(
+            dbc.Col(
+                dbc.Card([
+                    dbc.CardBody([
+                        html.Div([
+                            html.I(className=f"{icon} me-2"),
+                            html.Strong(cat),
+                        ]),
+                        dbc.Progress(
+                            value=cat_pass_pct,
+                            color=color,
+                            className="mt-2",
+                            style={"height": "8px"},
+                        ),
+                        html.Small(
+                            f"{counts['pass']}/{cat_total} passed",
+                            className="text-muted",
+                        ),
+                    ], className="py-2")
+                ], className="bg-dark border-secondary"),
+                className="mb-2",
+            )
+        )
+
+    cat_row = dbc.Row(cat_badges, className="mb-3")
+
+    # ── Findings table ──
+    severity_colors = {
+        "critical": "danger",
+        "high": "warning",
+        "medium": "info",
+        "low": "success",
+    }
+    status_icons = {
+        "PASS": ("✅", "success"),
+        "FAIL": ("❌", "danger"),
+        "ERROR": ("⚠️", "warning"),
+        "SKIPPED": ("⏭", "secondary"),
+    }
+
+    rows = []
+    for r in report.get("results", []):
+        icon, status_color = status_icons.get(r["status"], ("?", "secondary"))
+        sev_color = severity_colors.get(r["severity"], "secondary")
+
+        # Resource list (collapsible if many)
+        resources = r.get("affected_resources", [])
+        if resources:
+            res_content = html.Ul(
+                [html.Li(res, style={"fontSize": "0.75rem"}) for res in resources[:5]],
+                className="mb-0 ps-3",
+            )
+            if len(resources) > 5:
+                res_content = html.Div([
+                    res_content,
+                    html.Small(
+                        f"… and {len(resources) - 5} more",
+                        className="text-muted",
+                    ),
+                ])
+        else:
+            res_content = html.Small("—", className="text-muted")
+
+        rows.append(
+            html.Tr([
+                html.Td(
+                    html.Span(icon, style={"fontSize": "1.1rem"}),
+                    style={"width": "40px", "textAlign": "center"},
+                ),
+                html.Td([
+                    dbc.Badge(r["check_id"], color="dark",
+                              className="me-2", style={"fontSize": "0.7rem"}),
+                ], style={"width": "80px"}),
+                html.Td([
+                    html.Div(r["title"], style={"fontWeight": "500"}),
+                    html.Small(r.get("evidence", ""), className="text-muted"),
+                ]),
+                html.Td(
+                    dbc.Badge(r["severity"].upper(), color=sev_color,
+                              style={"fontSize": "0.7rem"}),
+                    style={"width": "90px"},
+                ),
+                html.Td(
+                    dbc.Badge(r["category"].split(" ")[0], color="dark",
+                              className="text-wrap",
+                              style={"fontSize": "0.65rem"}),
+                    style={"width": "80px"},
+                ),
+                html.Td(res_content),
+            ], className=f"{'table-danger' if r['status'] == 'FAIL' else ''}")
+        )
+
+    findings_table = dbc.Card([
+        dbc.CardHeader([
+            html.I(className="fas fa-list-check me-2"),
+            f"CIS OCI Benchmark — {total} Checks",
+        ]),
+        dbc.CardBody([
+            dbc.Table([
+                html.Thead(
+                    html.Tr([
+                        html.Th("", style={"width": "40px"}),
+                        html.Th("ID", style={"width": "80px"}),
+                        html.Th("Check"),
+                        html.Th("Severity", style={"width": "90px"}),
+                        html.Th("Category", style={"width": "80px"}),
+                        html.Th("Affected Resources"),
+                    ])
+                ),
+                html.Tbody(rows),
+            ], bordered=True, hover=True, responsive=True, size="sm",
+               className="table-dark mb-0"),
+        ]),
+    ], className="bg-dark border-secondary")
+
+    # Re-enable button
+    btn_children = [
+        html.I(className="fas fa-redo me-2"),
+        "Re-run CIS Benchmark",
+    ]
+
+    return [summary, cat_row, findings_table], False, btn_children

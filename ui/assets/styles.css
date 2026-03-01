@@ -167,23 +167,86 @@ body {
     border-color: var(--lynx-success) !important;
 }
 
-/* Table styling */
+/* Table styling — Premium Dark Theme */
 .table {
     color: var(--lynx-text-light) !important;
+    border-collapse: separate;
+    border-spacing: 0;
+    border-radius: 10px;
+    overflow: hidden;
 }
 
-.table-dark {
-    background-color: var(--lynx-bg-card) !important;
+.table-dark,
+.table[class*="table-dark"] {
+    --bs-table-bg: transparent !important;
+    --bs-table-striped-bg: rgba(95, 149, 152, 0.06) !important;
+    --bs-table-hover-bg: rgba(95, 149, 152, 0.12) !important;
+    --bs-table-border-color: rgba(95, 149, 152, 0.15) !important;
+    background-color: transparent !important;
 }
 
-.table-dark th,
-.table-dark td {
-    border-color: var(--lynx-border) !important;
+/* Header row */
+.table thead th,
+.table-dark thead th {
+    background: linear-gradient(135deg, rgba(6, 30, 41, 0.95), rgba(29, 84, 109, 0.85)) !important;
+    color: var(--lynx-accent) !important;
+    border-bottom: 2px solid var(--lynx-accent) !important;
+    border-top: none !important;
+    font-weight: 600;
+    font-size: 0.8rem;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    padding: 0.75rem 0.85rem !important;
+    white-space: nowrap;
+    position: sticky;
+    top: 0;
+    z-index: 1;
+}
+
+/* Data cells */
+.table tbody td,
+.table-dark tbody td {
+    border-color: rgba(95, 149, 152, 0.1) !important;
     color: var(--lynx-text-light) !important;
+    padding: 0.65rem 0.85rem !important;
+    font-size: 0.875rem;
+    vertical-align: middle;
+    transition: background-color 0.15s ease;
 }
 
-.table-dark tbody tr:hover {
-    background-color: rgba(95, 149, 152, 0.1) !important;
+/* Striped rows */
+.table-striped>tbody>tr:nth-of-type(odd)>td,
+.table-dark.table-striped>tbody>tr:nth-of-type(odd)>td {
+    background-color: rgba(95, 149, 152, 0.04) !important;
+}
+
+.table-striped>tbody>tr:nth-of-type(even)>td,
+.table-dark.table-striped>tbody>tr:nth-of-type(even)>td {
+    background-color: rgba(6, 30, 41, 0.3) !important;
+}
+
+/* Hover state */
+.table-hover>tbody>tr:hover>td,
+.table-dark.table-hover>tbody>tr:hover>td {
+    background-color: rgba(95, 149, 152, 0.14) !important;
+    color: #fff !important;
+}
+
+/* Bordered — subtle separators */
+.table-bordered> :not(caption)>*>*,
+.table-dark.table-bordered> :not(caption)>*>* {
+    border-color: rgba(95, 149, 152, 0.12) !important;
+    border-width: 1px !important;
+}
+
+/* Wrapper — glass-like card effect */
+.table-responsive {
+    background: linear-gradient(145deg, rgba(29, 84, 109, 0.35), rgba(6, 30, 41, 0.6));
+    border-radius: 10px;
+    border: 1px solid rgba(95, 149, 152, 0.18);
+    box-shadow: 0 4px 24px rgba(0, 0, 0, 0.25);
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
 }
 
 /* Badge styling */
@@ -355,20 +418,76 @@ body {
 
 /* DataTable styling (Dash) */
 .dash-table-container {
-    background-color: var(--lynx-bg-card) !important;
-    border-radius: 8px;
+    background-color: transparent !important;
+    border-radius: 10px;
     overflow: hidden;
 }
 
 .dash-spreadsheet-container .dash-spreadsheet-inner th {
-    background-color: var(--lynx-bg-dark) !important;
-    color: var(--lynx-text-light) !important;
+    background: linear-gradient(135deg, rgba(6, 30, 41, 0.95), rgba(29, 84, 109, 0.85)) !important;
+    color: var(--lynx-accent) !important;
+    font-weight: 600;
+    font-size: 0.8rem;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
 }
 
 .dash-spreadsheet-container .dash-spreadsheet-inner td {
+    background-color: transparent !important;
+    color: var(--lynx-text-light) !important;
+    border-color: rgba(95, 149, 152, 0.1) !important;
+}
+
+/* Dash dcc.Dropdown dark mode */
+.dash-dark-dropdown .Select-control,
+.Select-control {
+    background-color: var(--lynx-bg-dark) !important;
+    border-color: var(--lynx-border) !important;
+    color: var(--lynx-text-light) !important;
+}
+
+.dash-dark-dropdown .Select-menu-outer,
+.Select-menu-outer {
+    background-color: var(--lynx-bg-card) !important;
+    border-color: var(--lynx-border) !important;
+}
+
+.dash-dark-dropdown .Select-option,
+.Select-option {
     background-color: var(--lynx-bg-card) !important;
     color: var(--lynx-text-light) !important;
-    border-color: var(--lynx-border) !important;
+}
+
+.dash-dark-dropdown .Select-option.is-focused,
+.Select-option.is-focused {
+    background-color: rgba(95, 149, 152, 0.2) !important;
+    color: #fff !important;
+}
+
+.dash-dark-dropdown .Select-value-label,
+.Select-value-label {
+    color: var(--lynx-text-light) !important;
+}
+
+.dash-dark-dropdown .Select-input input,
+.Select-input input {
+    color: var(--lynx-text-light) !important;
+}
+
+.dash-dark-dropdown .Select-placeholder,
+.Select-placeholder {
+    color: var(--lynx-text-muted) !important;
+}
+
+.dash-dark-dropdown .Select-multi-value-wrapper .Select-value {
+    background-color: var(--lynx-accent) !important;
+    border-color: var(--lynx-accent) !important;
+    color: var(--lynx-bg-dark) !important;
+    border-radius: 4px;
+}
+
+.dash-dark-dropdown .Select-value-icon {
+    border-right-color: rgba(6, 30, 41, 0.3) !important;
 }
 
 /* Chart container styling */

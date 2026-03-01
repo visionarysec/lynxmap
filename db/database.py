@@ -382,11 +382,20 @@ def get_compartments_for_sunburst() -> Dict[str, Any]:
         cursor = conn.cursor()
         cursor.execute("SELECT compartment_id, name, parent_id FROM compartments")
         rows = cursor.fetchall()
+
+        # Get asset counts per compartment name
+        cursor.execute("""
+            SELECT compartment, COUNT(*) as count
+            FROM assets
+            GROUP BY compartment
+        """)
+        asset_counts = {r['compartment']: r['count'] for r in cursor.fetchall()}
     
     # Build dataframe-like structure
     ids = []
     labels = []
     parents = []
+    values = []
     
     # Set of all known compartment IDs
     all_known_ids = set(row['compartment_id'] for row in rows)
@@ -404,6 +413,9 @@ def get_compartments_for_sunburst() -> Dict[str, Any]:
         labels.append(row['name'])
         # If parent is empty, keep it empty (root)
         parents.append(row['parent_id'] if row['parent_id'] else "")
+        # Use asset count for this compartment name; default to 1 so leaf
+        # compartments without assets are still visible in the chart.
+        values.append(asset_counts.get(row['name'], 1))
         
     # Handle missing parents (orphans' parents that aren't in the DB)
     # Get all distinct parent IDs referenced by children
@@ -416,12 +428,14 @@ def get_compartments_for_sunburst() -> Dict[str, Any]:
             labels.append(f"Unknown Parent ({pid[-6:]})")
             # Link to tenancy if we have one, otherwise make it a root
             parents.append(tenancy_id if tenancy_id else "")
+            values.append(1)
             all_known_ids.add(pid) # Mark as handled
     
     return {
         'ids': ids,
         'labels': labels,
-        'parents': parents
+        'parents': parents,
+        'values': values
     }
 
 

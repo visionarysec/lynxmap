@@ -73,6 +73,60 @@ app.layout = dbc.Container([
 # Server instance for deployment
 server = app.server
 
+# ── OCI Object download route ─────────────────────────────────────────────
+from flask import request, Response
+import logging
+
+_download_logger = logging.getLogger("lynxmap.download")
+
+
+@server.route("/download-object")
+def download_oci_object():
+    """Stream an OCI Object Storage object to the browser as a download."""
+    ns = request.args.get("ns", "")
+    bucket = request.args.get("bucket", "")
+    obj = request.args.get("object", "")
+    region = request.args.get("region", "")
+
+    if not all([ns, bucket, obj]):
+        return "Missing required parameters (ns, bucket, object)", 400
+
+    try:
+        from collectors.oci_collector import OCICollector
+        collector = OCICollector()
+        client = collector.clients["object_storage"]
+
+        response = client.get_object(
+            namespace_name=ns,
+            bucket_name=bucket,
+            object_name=obj,
+        )
+
+        # Determine content type
+        content_type = (
+            response.headers.get("Content-Type", "application/octet-stream")
+        )
+
+        # Derive a safe filename from the object name
+        import os
+        filename = os.path.basename(obj)
+
+        def generate():
+            for chunk in response.data.raw.stream(1024 * 1024):
+                yield chunk
+
+        return Response(
+            generate(),
+            headers={
+                "Content-Disposition": f'attachment; filename="{filename}"',
+                "Content-Type": content_type,
+            },
+        )
+
+    except Exception as e:
+        _download_logger.error("Download failed for %s/%s/%s: %s", ns, bucket, obj, e)
+        return f"Download failed: {e}", 500
+
 if __name__ == "__main__":
     # Initialize database
     from db.database import init_database, get_total_asset_count

@@ -63,6 +63,7 @@ def create_compartment_sunburst():
         ids=data['ids'],
         names=data['labels'],
         parents=data['parents'],
+        values=data['values'],
         maxdepth=4,
         title="OCI Compartment Hierarchy"
     )
